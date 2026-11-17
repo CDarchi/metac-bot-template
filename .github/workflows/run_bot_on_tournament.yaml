@@ -42,3 +42,11 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ASKNEWS_CLIENT_ID: ${{ secrets.ASKNEWS_CLIENT_ID }}
           ASKNEWS_SECRET: ${{ secrets.ASKNEWS_SECRET }}
+          BOT_FORECAST_MODEL: ${{ vars.BOT_FORECAST_MODEL }}
+          BOT_REASONING_EFFORT: ${{ vars.BOT_REASONING_EFFORT }}
+          BOT_PREDICTIONS_PER_QUESTION: ${{ vars.BOT_PREDICTIONS_PER_QUESTION }}
+          BOT_RESEARCHER: ${{ vars.BOT_RESEARCHER }}
+          BOT_SUMMARIZER_MODEL: ${{ vars.BOT_SUMMARIZER_MODEL }}
+          BOT_PARSER_MODEL: ${{ vars.BOT_PARSER_MODEL }}
+          BOT_MAX_COST_PER_RUN_USD: ${{ vars.BOT_MAX_COST_PER_RUN_USD }}
+          BOT_DRY_RUN: ${{ vars.BOT_DRY_RUN }}

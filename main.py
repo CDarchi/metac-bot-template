@@ -16,6 +16,14 @@ from bot_helpers import (
 
 silence_noisy_dependencies()
 
+# Settings that can be changed from GitHub without editing code (see bot_config.py).
+from bot_config import (
+    build_llms,
+    describe_settings,
+    dry_run,
+    max_cost_per_run_usd,
+    predictions_per_question,
+)
 from forecasting_tools import (
     AskNewsSearcher,
     BinaryQuestion,
@@ -23,6 +31,7 @@ from forecasting_tools import (
     GeneralLlm,
     MetaculusClient,
     MetaculusQuestion,
+    MonetaryCostManager,
     MultipleChoiceQuestion,
     NumericDistribution,
     NumericQuestion,
@@ -701,31 +710,22 @@ if __name__ == "__main__":
     run_mode: Literal["tournament", "metaculus_cup", "test_questions"] = args.mode
 
     check_environment(strict=True)
-    publish_to_metaculus = True
+    publish_to_metaculus = not dry_run()
     print_startup_banner(run_mode, will_publish=publish_to_metaculus)
+    print(f"Settings: {describe_settings()}\n")
 
-    # Configure the bot. The `llms=` block below is commented out to use
-    # whichever default models forecasting-tools picks based on your env vars;
-    # uncomment and edit to pin specific models.
+    # Models, number of forecasts and the spending cap come from bot_config.py,
+    # which reads repository variables. Nothing here needs editing to change them.
+    configured_llms = build_llms()
     template_bot = FallTemplateBot2026(
         research_reports_per_question=1,
-        predictions_per_research_report=5,
+        predictions_per_research_report=predictions_per_question(),
         use_research_summary_to_forecast=False,
         publish_reports_to_metaculus=publish_to_metaculus,
         folder_to_save_reports_to=None,
         skip_previously_forecasted_questions=True,
         extra_metadata_in_explanation=True,
-        # llms={
-        #     "default": GeneralLlm(
-        #         model="openrouter/openai/gpt-4o",
-        #         temperature=0.3,
-        #         timeout=40,
-        #         allowed_tries=2,
-        #     ),
-        #     "summarizer": "openai/gpt-4o-mini",
-        #     "researcher": "asknews/news-summaries",
-        #     "parser": "openai/gpt-4o-mini",
-        # },
+        **({"llms": configured_llms} if configured_llms else {}),
     )
 
     # Per-mode tournament URL shown in the summary banner footer. These
@@ -741,39 +741,43 @@ if __name__ == "__main__":
     # exceptions, since return_exceptions=True) which then flows into the
     # summary printers below.
     client = MetaculusClient()
-    if run_mode == "tournament":
-        seasonal_tournament_reports = asyncio.run(
-            template_bot.forecast_on_tournament(
-                client.CURRENT_AI_COMPETITION_ID, return_exceptions=True
+    # Soft spending cap for this run. When it is reached, remaining questions fail
+    # for this run and are picked up again by the next scheduled run.
+    with MonetaryCostManager(max_cost_per_run_usd()) as cost_manager:
+        if run_mode == "tournament":
+            seasonal_tournament_reports = asyncio.run(
+                template_bot.forecast_on_tournament(
+                    client.CURRENT_AI_COMPETITION_ID, return_exceptions=True
+                )
             )
-        )
-        minibench_reports = asyncio.run(
-            template_bot.forecast_on_tournament(
-                client.CURRENT_MINIBENCH_ID, return_exceptions=True
+            minibench_reports = asyncio.run(
+                template_bot.forecast_on_tournament(
+                    client.CURRENT_MINIBENCH_ID, return_exceptions=True
+                )
             )
-        )
-        forecast_reports = seasonal_tournament_reports + minibench_reports
-    elif run_mode == "metaculus_cup":
-        # The Metaculus Cup may be uninitialized near the start of a season
-        # (Jan/May/Sep). MetaculusClient.ACX_2025_TOURNAMENT = 32564 and
-        # MetaculusClient.AI_2027_TOURNAMENT_ID = "ai-2027" are also valid
-        # targets here.
-        template_bot.skip_previously_forecasted_questions = False
-        forecast_reports = asyncio.run(
-            template_bot.forecast_on_tournament(
-                client.CURRENT_METACULUS_CUP_ID, return_exceptions=True
+            forecast_reports = seasonal_tournament_reports + minibench_reports
+        elif run_mode == "metaculus_cup":
+            # The Metaculus Cup may be uninitialized near the start of a season
+            # (Jan/May/Sep). MetaculusClient.ACX_2025_TOURNAMENT = 32564 and
+            # MetaculusClient.AI_2027_TOURNAMENT_ID = "ai-2027" are also valid
+            # targets here.
+            template_bot.skip_previously_forecasted_questions = False
+            forecast_reports = asyncio.run(
+                template_bot.forecast_on_tournament(
+                    client.CURRENT_METACULUS_CUP_ID, return_exceptions=True
+                )
             )
-        )
-    elif run_mode == "test_questions":
-        # The bot-testing-area tournament contains all question types and is
-        # the recommended target for smoke-testing your bot.
-        # https://www.metaculus.com/tournament/bot-testing-area/
-        template_bot.skip_previously_forecasted_questions = False
-        forecast_reports = asyncio.run(
-            template_bot.forecast_on_tournament(
-                "bot-testing-area", return_exceptions=True
+        elif run_mode == "test_questions":
+            # The bot-testing-area tournament contains all question types and is
+            # the recommended target for smoke-testing your bot.
+            # https://www.metaculus.com/tournament/bot-testing-area/
+            template_bot.skip_previously_forecasted_questions = False
+            forecast_reports = asyncio.run(
+                template_bot.forecast_on_tournament(
+                    "bot-testing-area", return_exceptions=True
+                )
             )
-        )
+    print(f"Estimated LLM cost of this run: ${cost_manager.current_usage:.2f}")
 
     template_bot.log_report_summary(forecast_reports)
     print_run_summary_banner(
